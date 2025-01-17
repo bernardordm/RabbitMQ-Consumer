@@ -1,51 +1,43 @@
-import express from 'express';
-import SmsConsumer from './consumers/sms.consumer';
-import dotenv from 'dotenv';
-import connectDB from './config/mongoose.config';
-import { Sms } from './models/sms.model';
-
-dotenv.config();
-
-async function startConsumer() {
-  const uri = process.env.RABBITMQ_URL || 'amqp://localhost';
-  const queue = 'sms_queue';
-  const smsConsumer = new SmsConsumer(uri, queue);
-
-  try {
-    await smsConsumer.start();
-    console.log('Connected to RabbitMQ');
-    smsConsumer.consume(async (message) => {
-      const content = message.content.toString();
-      console.log(`Received message: ${content}`);
-      // Process the message and save to MongoDB
-      const smsData = JSON.parse(content);
-      const sms = new Sms(smsData);
-      await sms.save();
-      console.log('SMS saved to MongoDB');
-    });
-  } catch (error) {
-    console.error('Failed to connect to RabbitMQ', error);
-    process.exit(1); // Exit the process with an error code
-  }
-}
-
-async function startServer() {
-  const app = express();
-  const port = process.env.PORT || 3002;
-
-  app.get('/', (req, res) => {
-    res.send('Server is running');
-  });
-
-  app.listen(port, () => {
-    console.log(`Server is running on http://localhost:${port}`);
-  });
-}
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { RabbitmqServer } from './rabbitmq/rabbitmq-server';
+import { SmppService } from './smpp/smpp-service';
 
 async function bootstrap() {
-  await connectDB();
-  await startConsumer();
-  await startServer();
+  const app = await NestFactory.create(AppModule);
+  await app.listen(3000);
+
+  const rabbitmqServer = app.get(RabbitmqServer);
+  await rabbitmqServer.start();
+
+  const smppService = app.get(SmppService);
+  await smppService.onModuleInit();
+
+  rabbitmqServer.consume('sms_queue', async (message) => {
+    const content = message.content.toString();
+    console.log(`Received message: ${content}`);
+
+    let parsedMessage;
+    try {
+      parsedMessage = JSON.parse(content);
+    } catch (error) {
+      console.error('Failed to parse message content:', error);
+      return;
+    }
+
+    const { phoneNumber, message: text } = parsedMessage;
+    if (!phoneNumber || !text) {
+      console.error('Invalid message format:', parsedMessage);
+      return;
+    }
+
+    try {
+      await smppService.sendSMS(phoneNumber, text);
+      console.log(`Message sent to ${phoneNumber}: ${text}`);
+    } catch (error) {
+      console.error(`Failed to send message to ${phoneNumber}: ${error.message}`);
+    }
+  });
 }
 
 bootstrap();
