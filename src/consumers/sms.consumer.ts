@@ -1,4 +1,5 @@
-import { Connection, Channel, connect, Message } from "amqplib";
+import { Connection, Channel, connect, Message } from 'amqplib';
+import { Sms } from '../models/sms.model';
 
 export default class SmsConsumer {
   private conn: Connection;
@@ -13,9 +14,9 @@ export default class SmsConsumer {
   }
 
   async consume(callback: (message: Message) => void) {
-    return this.channel.consume(this.queue, (message) => {
+    return this.channel.consume(this.queue, async (message) => {
       if (message) {
-        callback(message);
+        await callback(message);
         this.channel.ack(message);
       }
     });
@@ -28,9 +29,14 @@ const queue = 'sms_queue';
 
 const smsConsumer = new SmsConsumer(uri, queue);
 smsConsumer.start().then(() => {
-  smsConsumer.consume((message) => {
+  smsConsumer.consume(async (message) => {
     const content = message.content.toString();
     console.log(`Received message: ${content}`);
-    // Processar a mensagem aqui
+
+    // Processar a mensagem e salvar no MongoDB
+    const smsData = JSON.parse(content);
+    const sms = new Sms(smsData);
+    await sms.save();
+    console.log('SMS saved to MongoDB');
   });
 });

@@ -1,11 +1,12 @@
 import express from 'express';
 import SmsConsumer from './consumers/sms.consumer';
 import dotenv from 'dotenv';
+import connectDB from './config/mongoose.config';
+import { Sms } from './models/sms.model';
 
 dotenv.config();
 
 async function startConsumer() {
-  // Inicializar o consumidor de SMS
   const uri = process.env.RABBITMQ_URL || 'amqp://localhost';
   const queue = 'sms_queue';
   const smsConsumer = new SmsConsumer(uri, queue);
@@ -13,10 +14,14 @@ async function startConsumer() {
   try {
     await smsConsumer.start();
     console.log('Connected to RabbitMQ');
-    smsConsumer.consume((message) => {
+    smsConsumer.consume(async (message) => {
       const content = message.content.toString();
       console.log(`Received message: ${content}`);
-      // Process the message here
+      // Process the message and save to MongoDB
+      const smsData = JSON.parse(content);
+      const sms = new Sms(smsData);
+      await sms.save();
+      console.log('SMS saved to MongoDB');
     });
   } catch (error) {
     console.error('Failed to connect to RabbitMQ', error);
@@ -26,7 +31,7 @@ async function startConsumer() {
 
 async function startServer() {
   const app = express();
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 3002;
 
   app.get('/', (req, res) => {
     res.send('Server is running');
@@ -38,6 +43,7 @@ async function startServer() {
 }
 
 async function bootstrap() {
+  await connectDB();
   await startConsumer();
   await startServer();
 }
